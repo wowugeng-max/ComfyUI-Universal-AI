@@ -4,6 +4,7 @@ import comfy.utils
 from .utils import *
 from .api_adapters import call_universal_api
 
+
 class UniversalAILoader:
     @classmethod
     def INPUT_TYPES(s):
@@ -17,11 +18,12 @@ class UniversalAILoader:
             },
             "optional": {
                 "custom_model_name": ("STRING", {"default": ""}),
-                "custom_base_url": ("STRING", {"default": ""}), 
+                "custom_base_url": ("STRING", {"default": ""}),
                 "custom_api_version": ("STRING", {"default": ""}),
                 "extra_params": ("STRING", {"default": "{}", "multiline": True}),
             }
         }
+
     RETURN_TYPES = ("AI_CONFIG",)
     FUNCTION = "load"
     CATEGORY = "Universal_AI"
@@ -30,11 +32,15 @@ class UniversalAILoader:
         active_key = get_api_key(api_key)
         if refresh_list:
             sync_all_models(provider, active_key)
-        return ({"provider": provider, "api_key": active_key, 
-                 "model_name": kwargs.get("custom_model_name") or model_selection,
-                 "api_version": kwargs.get("custom_api_version") or api_version,
-                 "custom_base_url": kwargs.get("custom_base_url"),
-                 "extra_params": kwargs.get("extra_params")},)
+        return ({
+            "provider": provider,
+            "api_key": active_key,
+            "model_name": kwargs.get("custom_model_name") or model_selection,
+            "api_version": kwargs.get("custom_api_version") or api_version,
+            "custom_base_url": kwargs.get("custom_base_url"),
+            "extra_params": kwargs.get("extra_params")
+        },)
+
 
 class UniversalAIRunner:
     @classmethod
@@ -49,75 +55,105 @@ class UniversalAIRunner:
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
             },
             "optional": {
+                "text": ("STRING", {"default": "", "multiline": True}),  # ← 新增独立文本模态
                 "images": ("IMAGE",),
                 "video": ("IMAGE",),
                 "max_video_frames": ("INT", {"default": 10, "min": 1, "max": 100}),
             }
         }
+
     RETURN_TYPES = ("STRING", "IMAGE", "IMAGE")
     RETURN_NAMES = ("text", "image", "video_frames")
     FUNCTION = "execute"
     CATEGORY = "Universal_AI"
 
-    def execute(self, ai_config, system_prompt, user_prompt, max_image_size, temperature, seed, 
-                images=None, video=None, max_video_frames=10):
-        
-        # --- 彻底修复：防范 UI 插件传入 'fixed' 字符串 ---
+    def execute(
+        self,
+        ai_config,
+        system_prompt,
+        user_prompt,
+        max_image_size,
+        temperature,
+        seed,
+        text="",
+        images=None,
+        video=None,
+        max_video_frames=10
+    ):
         try:
-            # 过滤掉非数字字符并转换，如果转换失败则默认为 10
-            clean_val = ''.join(filter(str.isdigit, str(max_video_frames)))
-            safe_max_frames = int(clean_val) if clean_val else 10
+            safe_max_frames = int(''.join(filter(str.isdigit, str(max_video_frames))) or "10")
         except:
             safe_max_frames = 10
 
-        # 初始化进度条 (确保参数 100 是整数)
         pbar = comfy.utils.ProgressBar(100)
         pbar.update_absolute(10)
 
-        all_b64_imgs = []
-
         empty_img = torch.zeros([1, 64, 64, 3])
-        
-        # 处理图片输入 (支持 Batch)
+
+        # === 组装统一多模态部件 ===
+        parts = []
+
+        if user_prompt.strip():
+            parts.append({"type": "text", "data": user_prompt.strip()})
+
+        if text.strip():
+            clean_text = text.strip()
+            if len(clean_text) > 10000:
+                clean_text = clean_text[:10000]
+                print("⚠️ [Universal AI] Extra 'text' input truncated to 10,000 characters.")
+            parts.append({"type": "text", "data": clean_text})
+
         if images is not None:
             if images.ndim == 4:
                 for i in range(images.shape[0]):
-                    all_b64_imgs.append(tensor_to_base64(images[i], max_image_size))
+                    b64 = tensor_to_base64(images[i], max_image_size)
+                    if b64:
+                        parts.append({"type": "image", "data": b64})
             else:
-                all_b64_imgs.append(tensor_to_base64(images, max_image_size))
-            
-        # 处理视频输入 (均匀抽帧)
+                b64 = tensor_to_base64(images, max_image_size)
+                if b64:
+                    parts.append({"type": "image", "data": b64})
+
         if video is not None:
             num_frames = video.shape[0]
-            # 使用清洗后的 safe_max_frames
             indices = np.linspace(0, num_frames - 1, min(num_frames, safe_max_frames), dtype=int)
-            all_b64_imgs.extend([tensor_to_base64(video[i], max_image_size) for i in indices])
+            for i in indices:
+                b64 = tensor_to_base64(video[i], max_image_size)
+                if b64:
+                    parts.append({"type": "image", "data": b64})
+
+        if not parts:
+            raise ValueError("No input provided: connect at least user_prompt, text, image, or video.")
 
         pbar.update_absolute(40)
 
         try:
-            res = call_universal_api(ai_config, system_prompt, user_prompt, temperature, all_b64_imgs, seed=seed)
+            res = call_universal_api(
+                ai_config=ai_config,
+                system_prompt=system_prompt.strip() if system_prompt.strip() else None,
+                parts=parts,
+                temperature=temperature,
+                seed=seed
+            )
             pbar.update_absolute(85)
-            
-            
-            
+
             if res["type"] == "image":
                 return (user_prompt, base64_to_tensor(res["content"]), empty_img)
-            
+
             text_content = res["content"]
             video_tensor = empty_img
-            
-            # 简单检查是否包含视频链接 (如 Hailuo/Luma 返回)
+
             if "http" in text_content and any(ext in text_content.lower() for ext in [".mp4", ".mov", "video"]):
                 import re
-                urls = re.findall(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', text_content)
+                urls = re.findall(r'https?://[^\s]+', text_content)
                 if urls:
                     pbar.update_absolute(90)
                     v_tensor = url_to_video_tensor(urls[0])
-                    if v_tensor is not None: video_tensor = v_tensor
+                    if v_tensor is not None:
+                        video_tensor = v_tensor
+                    pbar.update_absolute(100)
 
-            pbar.update_absolute(100)
             return (text_content, empty_img, video_tensor)
-            
+
         except Exception as e:
             return (f"❌ Error: {str(e)}", empty_img, empty_img)
