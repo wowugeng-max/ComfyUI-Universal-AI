@@ -1,4 +1,8 @@
 <br>
+自用节点
+</br>
+
+<br>
 这套自定义节点是一个 通用多模态 AI 接入框架（Universal AI Integration Framework），
 </br>
 专为 ComfyUI 工作流打造。它允许用户在图形化界面中无缝调用来自多个主流大模型平台（如 Google Gemini、OpenAI、Qwen、Doubao、Grok 等）的文本、图像甚至视频生成能力，
