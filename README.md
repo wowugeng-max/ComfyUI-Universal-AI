@@ -45,6 +45,8 @@ pip install -r requirements.txt
 依赖包括：opencv-python, requests, Pillow, google-generativeai, chardet
 . 重启 ComfyUI
 启动后，在节点菜单中搜索 “🧠 wowugeng” 即可找到所有节点。
+
+
 🔌 三、核心节点说明
 . AI Model Loader (Ultimate) • 🧠 wowugeng
 配置 AI 提供商与模型。
@@ -56,6 +58,8 @@ model_selection	从缓存列表选择模型（带 [CHAT]/[VISION]/[IMAGE] 标签
 refresh_list	✅ 勾选以同步最新模型列表（需有效 Key）
 custom_model_name	（可选）手动输入模型 ID，优先级高于下拉框
 ✅ 输出：AI_CONFIG（供 Runner 使用）
+
+
 . AI Task Runner (Ultimate) • 🧠 wowugeng
 执行多模态推理任务。
 输入：
@@ -69,13 +73,19 @@ text：AI 返回的文本
 image：若模型支持生图（如 Qwen 图像模型），返回 IMAGE
 video_frames：若文本含 .mp4 链接，自动下载并转为视频帧
 ⚙️ 支持调节 temperature、seed、max_image_size（自动压缩 Base64 图像）
+
+
 . 全局配置工具（Utils）
 AI Set Global Config：将 AI_CONFIG 存入全局字典（指定 key）
 AI Get Global Config：通过 key 读取配置
 适用于复杂工作流，避免重复连接。
+
+
 . 辅助工具节点
 Text Input：纯文本输入
 File Read/Write TXT CSV：读写本地 .txt / .csv 文件，支持路径自定义
+
+
 🌐 四、模型能力标签说明
 插件自动为模型打标签，便于识别用途：
 表格
@@ -98,6 +108,8 @@ export UNIVERSAL_AI_API_KEY="your_key_here"
 python main.py
 多 Key 轮询：在 api_key 字段填写 key1,key2,key3，插件会随机选择。
 自定义 URL：通过 custom_base_url 接入私有 API 网关。
+
+
 🎯 六、典型应用场景
 多模态内容理解
 → 图文问答、OCR 识别、视频摘要（配合视频帧输入）
@@ -107,6 +119,8 @@ AI 绘图工作流
 → 同一输入，快速切换不同平台模型，对比输出效果
 自动化内容生产
 → AI 生成文案 → File Writer 保存 → 后续节点调用
+
+
 ❓ 七、常见问题（FAQ）
 Q：模型下拉框为空？
 A：请检查 api_key 是否正确，并勾选 refresh_list。部分平台（如 Doubao）需开通对应 region 权限。
@@ -116,6 +130,8 @@ Q：视频无法加载？
 A：确保视频 URL 可公开访问。本地视频需先通过其他节点（如 Load Video）转为帧张量。
 Q：出现 SSL 证书错误？
 A：插件已禁用 SSL 验证（verify=False），通常不影响使用。若仍失败，请检查网络代理设置。
+
+
 📜 八、致谢
 感谢 ComfyUI 提供强大的可视化工作流框架。
 感谢各 AI 平台（Google, OpenAI, 阿里云, 字节跳动等）提供卓越的大模型 API。
