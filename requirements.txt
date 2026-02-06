@@ -1,1 +1,5 @@
 opencv-python
+requests
+Pillow
+google-generativeai
+chardet
