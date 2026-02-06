@@ -157,3 +157,48 @@ class UniversalAIRunner:
 
         except Exception as e:
             return (f"❌ Error: {str(e)}", empty_img, empty_img)
+
+
+
+# ==============================
+# Set / Get Global AI Config Nodes
+# ==============================
+
+class UniversalAISetConfig:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "ai_config": ("AI_CONFIG",),
+                "key": ("STRING", {"default": "default"}),
+            }
+        }
+    RETURN_TYPES = ()
+    OUTPUT_NODE = True  # 表示该节点主要用于副作用（设置状态）
+    FUNCTION = "set_config"
+    CATEGORY = "Universal_AI/Utils"
+
+    def set_config(self, ai_config, key="default"):
+        from .utils import set_global_ai_config
+        set_global_ai_config(key.strip() or "default", ai_config)
+        return {}
+
+
+class UniversalAIGetConfig:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "key": ("STRING", {"default": "default"}),
+            }
+        }
+    RETURN_TYPES = ("AI_CONFIG",)
+    FUNCTION = "get_config"
+    CATEGORY = "Universal_AI/Utils"
+
+    def get_config(self, key="default"):
+        from .utils import get_global_ai_config
+        config = get_global_ai_config(key.strip() or "default")
+        if config is None:
+            raise ValueError(f"No AI config found for key '{key}'. Please use 'UniversalAISetConfig' first.")
+        return (config,)

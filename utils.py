@@ -97,3 +97,14 @@ def url_to_video_tensor(url):
     except Exception as e:
         print(f"Video Error: {e}")
         return None
+
+
+
+# ===== 全局 AI 配置存储（用于 Set/Get 节点）=====
+_GLOBAL_AI_CONFIG = {}
+
+def set_global_ai_config(key: str, config):
+    _GLOBAL_AI_CONFIG[key] = config
+
+def get_global_ai_config(key: str):
+    return _GLOBAL_AI_CONFIG.get(key)
