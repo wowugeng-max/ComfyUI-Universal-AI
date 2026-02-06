@@ -32,6 +32,8 @@ class UniversalAILoader:
         active_key = get_api_key(api_key)
         if refresh_list:
             sync_all_models(provider, active_key)
+        
+        # 实时重新获取模型列表以更新 UI 下拉框内容
         return ({
             "provider": provider,
             "api_key": active_key,
@@ -55,7 +57,7 @@ class UniversalAIRunner:
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
             },
             "optional": {
-                "text": ("STRING", {"default": "", "multiline": True}),  # ← 新增独立文本模态
+                "text": ("STRING", {"default": "", "multiline": True}),
                 "images": ("IMAGE",),
                 "video": ("IMAGE",),
                 "max_video_frames": ("INT", {"default": 10, "min": 1, "max": 100}),
@@ -100,34 +102,28 @@ class UniversalAIRunner:
             clean_text = text.strip()
             if len(clean_text) > 10000:
                 clean_text = clean_text[:10000]
-                print("⚠️ [Universal AI] Extra 'text' input truncated to 10,000 characters.")
+                print("⚠️ [Universal AI] Extra 'text' input truncated.")
             parts.append({"type": "text", "data": clean_text})
 
         if images is not None:
-            if images.ndim == 4:
-                for i in range(images.shape[0]):
-                    b64 = tensor_to_base64(images[i], max_image_size)
-                    if b64:
-                        parts.append({"type": "image", "data": b64})
-            else:
-                b64 = tensor_to_base64(images, max_image_size)
-                if b64:
-                    parts.append({"type": "image", "data": b64})
+            for i in range(images.shape[0]):
+                b64 = tensor_to_base64(images[i], max_image_size)
+                if b64: parts.append({"type": "image", "data": b64})
 
         if video is not None:
             num_frames = video.shape[0]
             indices = np.linspace(0, num_frames - 1, min(num_frames, safe_max_frames), dtype=int)
             for i in indices:
                 b64 = tensor_to_base64(video[i], max_image_size)
-                if b64:
-                    parts.append({"type": "image", "data": b64})
+                if b64: parts.append({"type": "image", "data": b64})
 
         if not parts:
-            raise ValueError("No input provided: connect at least user_prompt, text, image, or video.")
+            raise ValueError("No input provided.")
 
         pbar.update_absolute(40)
 
         try:
+            # 调用 API
             res = call_universal_api(
                 ai_config=ai_config,
                 system_prompt=system_prompt.strip() if system_prompt.strip() else None,
@@ -137,12 +133,17 @@ class UniversalAIRunner:
             )
             pbar.update_absolute(85)
 
+            # --- 修改逻辑：处理生图模型的返回值 ---
             if res["type"] == "image":
-                return (user_prompt, base64_to_tensor(res["content"]), empty_img)
+                # res["content"] 是 base64 字符串
+                generated_image = base64_to_tensor(res["content"])
+                return ("Image generated successfully.", generated_image, empty_img)
 
+            # --- 处理文本返回值 ---
             text_content = res["content"]
             video_tensor = empty_img
 
+            # 视频链接转换逻辑保持不变
             if "http" in text_content and any(ext in text_content.lower() for ext in [".mp4", ".mov", "video"]):
                 import re
                 urls = re.findall(r'https?://[^\s]+', text_content)
@@ -151,13 +152,14 @@ class UniversalAIRunner:
                     v_tensor = url_to_video_tensor(urls[0])
                     if v_tensor is not None:
                         video_tensor = v_tensor
-                    pbar.update_absolute(100)
-
+            
+            pbar.update_absolute(100)
             return (text_content, empty_img, video_tensor)
 
         except Exception as e:
+            import traceback
+            print(traceback.format_exc())
             return (f"❌ Error: {str(e)}", empty_img, empty_img)
-
 
 
 # ==============================
@@ -174,12 +176,11 @@ class UniversalAISetConfig:
             }
         }
     RETURN_TYPES = ()
-    OUTPUT_NODE = True  # 表示该节点主要用于副作用（设置状态）
+    OUTPUT_NODE = True
     FUNCTION = "set_config"
     CATEGORY = "Universal_AI/Utils"
 
     def set_config(self, ai_config, key="default"):
-        from .utils import set_global_ai_config
         set_global_ai_config(key.strip() or "default", ai_config)
         return {}
 
@@ -197,8 +198,7 @@ class UniversalAIGetConfig:
     CATEGORY = "Universal_AI/Utils"
 
     def get_config(self, key="default"):
-        from .utils import get_global_ai_config
         config = get_global_ai_config(key.strip() or "default")
         if config is None:
-            raise ValueError(f"No AI config found for key '{key}'. Please use 'UniversalAISetConfig' first.")
+            raise ValueError(f"No AI config found for key '{key}'.")
         return (config,)
