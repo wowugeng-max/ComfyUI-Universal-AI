@@ -1,65 +1,113 @@
 import { app } from "../../../scripts/app.js";
 
 app.registerExtension({
-    name: "UniversalAI.ModelFilter",
-    async beforeRegisterNodeDef(nodeType, nodeData, app) {
+    name: "UniversalAI.Framework.PureFrontend",
+    
+    async getCustomWidgets() {
+        return {
+            UNIVERSAL_KEY: (node, inputName, inputData) => {
+                const w = node.addWidget("combo", inputName, inputData[1].default || "default", (v) => {
+                    w.value = v;
+                    if (node.properties) node.properties.value = v;
+                }, { values: ["(Wait) Set Node"] });
+                node.keyWidget = w;
+                return w;
+            }
+        };
+    },
+
+    async beforeRegisterNodeDef(nodeType, nodeData) {
+        
+        // --- 1. Loader：恢复模型过滤 ---
         if (nodeData.name === "UniversalAILoader") {
-            
-            // 拦截节点创建事件
             const onNodeCreated = nodeType.prototype.onNodeCreated;
             nodeType.prototype.onNodeCreated = function () {
                 const r = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
                 
-                // 1. 查找对应的 UI 组件 (Widget)
-                const providerWidget = this.widgets.find(w => w.name === "provider");
-                const modelWidget = this.widgets.find(w => w.name === "model_selection");
+                const pWidget = this.widgets.find(w => w.name === "provider");
+                const mWidget = this.widgets.find(w => w.name === "model_selection");
 
-                if (!providerWidget || !modelWidget) return r;
-
-                // 2. 定义更新模型列表的异步函数
                 const updateModels = async () => {
-                    const provider = providerWidget.value;
-                    console.log(`[Universal AI] 🔄 Requesting models for: ${provider}`);
-                    
-                    try {
-                        // 向后端请求筛选后的模型列表
-                        const response = await fetch(`/universal_ai/get_models?provider=${provider}`);
-                        if (!response.ok) throw new Error("Backend API not responding");
-                        
-                        const models = await response.json();
+                    // 💡 恢复根据 provider 获取模型的逻辑
+                    const resp = await fetch(`/universal_ai/get_models?provider=${pWidget.value}`);
+                    const models = await resp.json();
+                    if (Array.isArray(models) && mWidget) {
+                        mWidget.options.values = models;
+                        if (!models.includes(mWidget.value)) mWidget.value = models[0] || "";
+                    }
+                    // 联动：让下游 Set 刷新 Key
+                    app.graph._nodes.filter(n => n.type === "UniversalAISetConfig").forEach(s => s.refreshKey?.());
+                };
 
-                        // 💡 关键改动：去掉 models.length > 0 的判断
-                        // 只要后端有返回（哪怕是保底模型），就执行更新
-                        if (Array.isArray(models)) {
-                            // 更新下拉列表的所有可选项
-                            modelWidget.options.values = models;
+                pWidget.callback = updateModels;
+                mWidget.callback = () => {
+                    app.graph._nodes.filter(n => n.type === "UniversalAISetConfig").forEach(s => s.refreshKey?.());
+                };
+                return r;
+            };
+        }
+
+        // --- 2. Set 节点：实时更新值 ---
+        if (nodeData.name === "UniversalAISetConfig") {
+            const onNodeCreated = nodeType.prototype.onNodeCreated;
+            nodeType.prototype.onNodeCreated = function () {
+                const r = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
+                
+                this.refreshKey = () => {
+                    const linkId = this.inputs[0].link;
+                    if (!linkId) return;
+                    const origin = app.graph.getNodeById(app.graph.links[linkId].origin_id);
+                    if (origin && origin.type === "UniversalAILoader") {
+                        const prov = origin.widgets.find(w => w.name === "provider").value;
+                        const mod = origin.widgets.find(w => w.name === "model_selection").value;
+                        const modShort = mod.replace(/\[.*?\]\s*/, "").split("-")[0];
+                        const time = new Date().toTimeString().split(' ')[0].replace(/:/g, ''); 
+                        const newKey = `${prov}_${modShort}_ID${this.id}_${time}`;
+                        
+                        if (this.keyWidget) {
+                            const oldKey = this.keyWidget.value;
+                            this.keyWidget.value = newKey;
                             
-                            // 检查当前选中的值是否还在新列表中
-                            // 如果不在（比如从 Gemini 切换到 Grok），则强制选中新列表的第一个
-                            if (!models.includes(modelWidget.value)) {
-                                modelWidget.value = models[0] || "";
-                            }
-                            
-                            // 强制 ComfyUI 重新绘制画布，确保 UI 立即显示变化
-                            app.canvas.setDirty(true, true);
+                            // 💡 联动：直接找到正在引用我的 Get 节点，暴力覆盖它们的值
+                            app.graph._nodes.filter(n => n.type === "UniversalAIGetConfig").forEach(gn => {
+                                if (gn.keyWidget && (gn.keyWidget.value === oldKey || gn.keyWidget.value.includes(`_ID${this.id}_`))) {
+                                    gn.keyWidget.value = newKey;
+                                }
+                            });
                         }
-                    } catch (e) {
-                        console.error("[Universal AI] Filter Error:", e);
+                    }
+                };
+                this.onConnectionsChange = this.refreshKey;
+                return r;
+            };
+        }
+
+        // --- 3. Get 节点：纯前端扫描，不请求后端 ---
+        if (nodeData.name === "UniversalAIGetConfig") {
+            const onNodeCreated = nodeType.prototype.onNodeCreated;
+            nodeType.prototype.onNodeCreated = function () {
+                const r = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
+                
+                this.refreshFromCanvas = () => {
+                    // 💡 核心改动：直接从画布上的所有 Set 节点里抓取当前显示的 Widget 值
+                    const allSetNodes = app.graph._nodes.filter(n => n.type === "UniversalAISetConfig");
+                    const keys = allSetNodes.map(n => n.widgets.find(w => w.name === "key")?.value).filter(v => v);
+                    
+                    if (this.keyWidget) {
+                        const current = this.keyWidget.value;
+                        this.keyWidget.options.values = keys.length > 0 ? keys : ["(Wait) No Set Nodes Found"];
+                        
+                        // 如果当前值不在列表里，且列表有新值，尝试自动切换
+                        if (!keys.includes(current) && keys.length > 0) {
+                            // 如果是初始状态，强制选第一个
+                            if (current.includes("Wait")) this.keyWidget.value = keys[0];
+                        }
                     }
                 };
 
-                // 3. 监听 Provider 的变化
-                // 使用这种方式可以保留原有的 callback 逻辑，同时注入我们的 updateModels
-                const oldCallback = providerWidget.callback;
-                providerWidget.callback = function () {
-                    const result = oldCallback ? oldCallback.apply(this, arguments) : undefined;
-                    updateModels();
-                    return result;
-                };
-
-                // 4. 节点初次加载/创建时，延迟运行一次以初始化列表
-                setTimeout(updateModels, 300);
-
+                // 只要鼠标一靠近或者点开下拉框，就即时扫描全图
+                this.onMouseEnter = this.refreshFromCanvas;
+                this.onMouseDown = this.refreshFromCanvas;
                 return r;
             };
         }

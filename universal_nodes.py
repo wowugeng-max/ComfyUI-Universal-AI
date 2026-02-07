@@ -5,15 +5,27 @@ from .utils import *
 from .api_adapters import call_universal_api
 from server import PromptServer
 from aiohttp import web
+import time
+from .utils import get_api_key, get_combined_models, set_global_ai_config, get_global_ai_config, _GLOBAL_AI_CONFIG
 
 
-# 注册后端接口：根据 provider 获取模型列表
+# ==============================
+# 后端 API 路由注册
+# ==============================
+
 @PromptServer.instance.routes.get("/universal_ai/get_models")
 async def get_models_endpoint(request):
     provider = request.query.get("provider", "")
-    # 调用我们之前在 utils.py 里改好的 get_combined_models
     models = get_combined_models(provider=provider)
     return web.json_response(models)
+
+@PromptServer.instance.routes.get("/universal_ai/get_all_keys")
+async def get_all_keys_endpoint(request):
+    from .utils import _GLOBAL_AI_CONFIG
+    keys = list(_GLOBAL_AI_CONFIG.keys())
+    if not keys:
+        return web.json_response(["(Wait) Run Loader + Set Node first"])
+    return web.json_response(keys)
 
 
 class UniversalAILoader:
@@ -33,7 +45,6 @@ class UniversalAILoader:
                 "custom_api_version": ("STRING", {"default": ""}),
                 "extra_params": ("STRING", {"default": "{}", "multiline": True}),
             },
-            # 💡 增加隐藏参数，获取当前 Loader 节点的 ID
             "hidden": {"unique_id": "UNIQUE_ID"}, 
         }
 
@@ -43,10 +54,6 @@ class UniversalAILoader:
 
     def load(self, provider, api_key, model_selection, api_version, refresh_list, unique_id=None, **kwargs):
         active_key = get_api_key(api_key)
-        if refresh_list:
-            sync_all_models(provider, active_key)
-        
-        # 💡 植入 source_node 标记，记录这个配置是由哪个节点产生的
         return ({
             "provider": provider,
             "api_key": active_key,
@@ -54,7 +61,8 @@ class UniversalAILoader:
             "api_version": kwargs.get("custom_api_version") or api_version,
             "custom_base_url": kwargs.get("custom_base_url"),
             "extra_params": kwargs.get("extra_params"),
-            "source_node": f"Loader_{unique_id}" if unique_id else "Direct_Loader"
+            "source_node": f"Loader_{unique_id}" if unique_id else "Direct_Loader",
+            "_timestamp": time.time()
         },)
 
 
@@ -83,66 +91,32 @@ class UniversalAIRunner:
     FUNCTION = "execute"
     CATEGORY = "Universal_AI"
 
-    def execute(
-        self,
-        ai_config,
-        system_prompt,
-        user_prompt,
-        max_image_size,
-        temperature,
-        seed,
-        text="",
-        images=None,
-        video=None,
-        max_video_frames=10
-    ):
-        # 💡 提取来源标记和当前配置概况
+    def execute(self, ai_config, system_prompt, user_prompt, max_image_size, temperature, seed, **kwargs):
+        # 💡 核心改动：使用 Comfy 内部的 ProgressBar
+        # 它会自动处理节点内的绿色填充条
+        pbar = comfy.utils.ProgressBar(100)
+        
         source_info = ai_config.get("source_node", "Unknown_Source")
         provider = ai_config.get("provider")
         model = ai_config.get("model_name")
         
         print(f"🕵️ [Universal AI] Runner Starting...")
-        print(f"   - Trace: {source_info}")
-        print(f"   - Config: {provider} / {model}")
+        pbar.update(10) # 节点亮起 10%
 
-        try:
-            safe_max_frames = int(''.join(filter(str.isdigit, str(max_video_frames))) or "10")
-        except:
-            safe_max_frames = 10
-
-        pbar = comfy.utils.ProgressBar(100)
-        pbar.update_absolute(10)
-
-        empty_img = torch.zeros([1, 64, 64, 3])
-
-        # === 组装统一多模态部件 ===
+        # 组装消息
         parts = []
-        if user_prompt.strip():
-            parts.append({"type": "text", "data": user_prompt.strip()})
-        if text.strip():
-            clean_text = text.strip()
-            if len(clean_text) > 10000:
-                clean_text = clean_text[:10000]
-                print("⚠️ [Universal AI] Extra 'text' input truncated.")
-            parts.append({"type": "text", "data": clean_text})
-        if images is not None:
-            for i in range(images.shape[0]):
-                b64 = tensor_to_base64(images[i], max_image_size)
-                if b64: parts.append({"type": "image", "data": b64})
-        if video is not None:
-            num_frames = video.shape[0]
-            indices = np.linspace(0, num_frames - 1, min(num_frames, safe_max_frames), dtype=int)
-            for i in indices:
-                b64 = tensor_to_base64(video[i], max_image_size)
-                if b64: parts.append({"type": "image", "data": b64})
-
-        if not parts:
-            raise ValueError(f"No input provided. (Check {source_info})")
-
-        pbar.update_absolute(40)
+        combined_text = (kwargs.get("text", "") + "\n" + user_prompt).strip()
+        if combined_text:
+            parts.append({"type": "text", "data": combined_text})
+        
+        if "images" in kwargs:
+            pbar.update(20) # 组装图片进度
+            parts.append({"type": "image", "data": kwargs["images"]})
 
         try:
-            # 调用 API
+            # 💡 在调用 API 前，将进度条推到中段
+            pbar.update(50) 
+            
             res = call_universal_api(
                 ai_config=ai_config,
                 system_prompt=system_prompt.strip() if system_prompt.strip() else None,
@@ -150,34 +124,19 @@ class UniversalAIRunner:
                 temperature=temperature,
                 seed=seed
             )
-            pbar.update_absolute(85)
-
-            if res["type"] == "image":
-                generated_image = base64_to_tensor(res["content"])
-                return ("Image generated successfully.", generated_image, empty_img)
-
-            text_content = res["content"]
-            video_tensor = empty_img
-
-            if "http" in text_content and any(ext in text_content.lower() for ext in [".mp4", ".mov", "video"]):
-                import re
-                urls = re.findall(r'https?://[^\s]+', text_content)
-                if urls:
-                    pbar.update_absolute(90)
-                    v_tensor = url_to_video_tensor(urls[0])
-                    if v_tensor is not None:
-                        video_tensor = v_tensor
             
-            pbar.update_absolute(100)
-            return (text_content, empty_img, video_tensor)
+            # 💡 任务结束，进度条拉满
+            pbar.update(100)
+            
+            content = res.get("content", "") if isinstance(res, dict) else str(res)
+            return (content, torch.zeros([1, 64, 64, 3]), torch.zeros([1, 64, 64, 3]))
 
         except Exception as e:
-            # 💡 增强报错信息：包含来源节点 ID
+            # 出错重置进度条
+            pbar.update(0)
             error_report = f"❌ Error [Source: {source_info}]: {str(e)}"
             print(error_report)
-            import traceback
-            print(traceback.format_exc())
-            return (error_report, empty_img, empty_img)
+            return (error_report, torch.zeros([1, 64, 64, 3]), torch.zeros([1, 64, 64, 3]))
 
 
 # ==============================
@@ -190,7 +149,7 @@ class UniversalAISetConfig:
         return {
             "required": {
                 "ai_config": ("AI_CONFIG",),
-                "key": ("STRING", {"default": "default"}),
+                "key": ("UNIVERSAL_KEY", {"default": "default"}),
             },
             "hidden": {"unique_id": "UNIQUE_ID"}, 
         }
@@ -201,12 +160,12 @@ class UniversalAISetConfig:
     CATEGORY = "Universal_AI/Utils"
 
     def set_config(self, ai_config, key="default", unique_id=None):
-        # 💡 创建配置副本，并更新来源标记（追踪它是通过哪个全局键传递的）
         config_to_store = ai_config.copy()
         original_source = config_to_store.get("source_node", "Unknown")
         config_to_store["source_node"] = f"{original_source} -> GlobalKey:{key}(Node_{unique_id})"
-        
+        config_to_store["_timestamp"] = time.time()
         set_global_ai_config(key.strip() or "default", config_to_store)
+        print(f"💾 [Universal AI] Config saved to Key: {key}")
         return {}
 
 
@@ -215,15 +174,22 @@ class UniversalAIGetConfig:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "key": ("STRING", {"default": "default"}),
+                "key": ("UNIVERSAL_KEY", {"default": "default"}),
             }
         }
+        
     RETURN_TYPES = ("AI_CONFIG",)
     FUNCTION = "get_config"
     CATEGORY = "Universal_AI/Utils"
 
+    @classmethod
+    def IS_CHANGED(s, key):
+        from .utils import _GLOBAL_AI_CONFIG
+        config = _GLOBAL_AI_CONFIG.get(key, {})
+        return config.get("_timestamp", 0)
+
     def get_config(self, key="default"):
         config = get_global_ai_config(key)
         if config is None:
-            raise RuntimeError(f"❌ [Universal AI] Config Key '{key}' not found. Check your 'Set Global Config' node.")
+            raise RuntimeError(f"❌ [Universal AI] Config Key '{key}' not found.")
         return (config,)
