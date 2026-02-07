@@ -1,5 +1,5 @@
-opencv-python
 requests
 Pillow
-google-generativeai
-chardet
+numpy
+opencv-python
+google-generativeai  

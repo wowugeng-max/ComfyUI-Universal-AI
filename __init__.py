@@ -10,10 +10,12 @@ from .file_nodes import (
     UniversalFileWriter,
     UniversalFileReader
 )
-# 新增导入
 from .text_nodes import (
     TextInputNode
 )
+
+# 💡 关键：告诉 ComfyUI 插件的 JS 存放路径
+WEB_DIRECTORY = "./web"
 
 # Class mappings
 NODE_CLASS_MAPPINGS = {
@@ -23,7 +25,6 @@ NODE_CLASS_MAPPINGS = {
     "UniversalAIGetConfig": UniversalAIGetConfig,
     "UniversalFileWriter": UniversalFileWriter,
     "UniversalFileReader": UniversalFileReader,
-    # 新增节点
     "TextInput": TextInputNode
 }
 
@@ -35,6 +36,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "UniversalAIGetConfig": "AI Get Global Config • 🧠 wowugeng",
     "UniversalFileWriter": "File Write TXT CSV • 🧠 wowugeng",
     "UniversalFileReader": "File Read TXT CSV • 🧠 wowugeng",
-    # 新增显示名
     "TextInput": "Text Input • 🧠 wowugeng"
 }
+
+# 导出所有必要变量
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
