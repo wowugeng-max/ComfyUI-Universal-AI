@@ -1,6 +1,7 @@
 import os
 import csv
 import comfy.utils
+from datetime import datetime  # 💡 引入时间模块处理时间戳
 
 class UniversalFileWriter:
     @classmethod
@@ -11,6 +12,8 @@ class UniversalFileWriter:
                 "file_path": ("STRING", {"default": "/path/to/output"}),
                 "file_name": ("STRING", {"default": "output"}),
                 "file_type": (["txt", "csv"], {"default": "txt"}),
+                # 💡 新增：是否覆盖现有文件
+                "overwrite": ("BOOLEAN", {"default": True}),
             }
         }
 
@@ -20,22 +23,30 @@ class UniversalFileWriter:
     CATEGORY = "Universal_AI/Utils"
     OUTPUT_NODE = True
 
-    def write_file(self, text, file_path, file_name, file_type):
-        os.makedirs(file_path, exist_ok=True)
+    def write_file(self, text, file_path, file_name, file_type, overwrite):
+        path_clean = file_path.strip()
+        os.makedirs(path_clean, exist_ok=True)
+        
         ext = file_type.lower()
-        full_path = os.path.join(file_path.strip(), f"{file_name.strip()}.{ext}")
+        name_clean = file_name.strip()
+        
+        # 初始目标路径
+        full_path = os.path.join(path_clean, f"{name_clean}.{ext}")
+
+        # 💡 核心逻辑：如果不覆盖且文件已存在，生成带时间戳的副本名
+        if not overwrite and os.path.exists(full_path):
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            full_path = os.path.join(path_clean, f"{name_clean}_{timestamp}.{ext}")
 
         try:
             if ext == "txt":
                 with open(full_path, "w", encoding="utf-8") as f:
                     f.write(text)
             elif ext == "csv":
-                # 假设输入是多行文本，每行用换行分隔，字段用逗号分隔
                 lines = [line for line in text.strip().split("\n") if line]
                 with open(full_path, "w", encoding="utf-8", newline="") as f:
                     writer = csv.writer(f)
                     for line in lines:
-                        # 简单按逗号分割（如需更健壮可改用 csv.reader 解析输入）
                         writer.writerow(line.split(","))
             else:
                 raise ValueError("Unsupported file type")

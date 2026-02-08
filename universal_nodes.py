@@ -6,8 +6,43 @@ from .api_adapters import call_universal_api
 from server import PromptServer
 from aiohttp import web
 import time
+import base64
+import io
+from PIL import Image
 from .utils import get_api_key, get_combined_models, set_global_ai_config, get_global_ai_config, _GLOBAL_AI_CONFIG
 
+# ==============================
+# 💡 辅助工具：Tensor 转 Base64 (支持自动缩放)
+# ==============================
+def tensor_to_base64(tensor, auto_resize=False, max_size=1024):
+    """
+    将 ComfyUI 的 Tensor 格式图片转换为 Base64 字符串
+    """
+    try:
+        # tensor shape: [1, H, W, C]
+        i = 255. * tensor[0].cpu().numpy()
+        img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
+        
+        # 💡 自动缩放逻辑
+        if auto_resize:
+            w, h = img.size
+            if max(w, h) > max_size:
+                if w > h:
+                    new_w = max_size
+                    new_h = int(h * (max_size / w))
+                else:
+                    new_h = max_size
+                    new_w = int(w * (max_size / h))
+                img = img.resize((new_w, new_h), Image.LANCZOS)
+        
+        buffered = io.BytesIO()
+        # 使用 JPEG 格式减小体积
+        img.save(buffered, format="JPEG", quality=85)
+        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        return img_str
+    except Exception as e:
+        print(f"⚠️ [Universal AI] Image conversion failed: {str(e)}")
+        return None
 
 # ==============================
 # 后端 API 路由注册
@@ -74,6 +109,7 @@ class UniversalAIRunner:
                 "ai_config": ("AI_CONFIG",),
                 "system_prompt": ("STRING", {"default": "You are a helpful assistant.", "multiline": True}),
                 "user_prompt": ("STRING", {"default": "", "multiline": True}),
+                "auto_resize": ("BOOLEAN", {"default": True}), # 💡 自动缩放开关
                 "max_image_size": ("INT", {"default": 1024, "min": 256, "max": 2048}),
                 "temperature": ("FLOAT", {"default": 0.7, "min": 0, "max": 2.0, "step": 0.1}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
@@ -91,30 +127,39 @@ class UniversalAIRunner:
     FUNCTION = "execute"
     CATEGORY = "Universal_AI"
 
-    def execute(self, ai_config, system_prompt, user_prompt, max_image_size, temperature, seed, **kwargs):
-        # 💡 核心改动：使用 Comfy 内部的 ProgressBar
-        # 它会自动处理节点内的绿色填充条
+    def execute(self, ai_config, system_prompt, user_prompt, auto_resize, max_image_size, temperature, seed, **kwargs):
         pbar = comfy.utils.ProgressBar(100)
-        
         source_info = ai_config.get("source_node", "Unknown_Source")
-        provider = ai_config.get("provider")
-        model = ai_config.get("model_name")
         
         print(f"🕵️ [Universal AI] Runner Starting...")
-        pbar.update(10) # 节点亮起 10%
+        pbar.update(10)
 
-        # 组装消息
+        # 组装文本消息
         parts = []
         combined_text = (kwargs.get("text", "") + "\n" + user_prompt).strip()
         if combined_text:
             parts.append({"type": "text", "data": combined_text})
         
-        if "images" in kwargs:
-            pbar.update(20) # 组装图片进度
-            parts.append({"type": "image", "data": kwargs["images"]})
+        # 💡 核心改动：多图 Batch 支持
+        if "images" in kwargs and kwargs["images"] is not None:
+            images_tensor = kwargs["images"]
+            batch_size = images_tensor.shape[0]
+            print(f"📸 [Universal AI] Processing {batch_size} image(s) in batch...")
+            
+            for i in range(batch_size):
+                # 提取单张图片 Tensor [1, H, W, C]
+                single_img_tensor = images_tensor[i:i+1]
+                b64_data = tensor_to_base64(single_img_tensor, auto_resize=auto_resize, max_size=max_image_size)
+                
+                if b64_data:
+                    parts.append({"type": "image", "data": b64_data})
+                
+                # 动态更新进度 (20%-45% 留给图片转换)
+                current_p = 20 + int((i + 1) / batch_size * 25)
+                pbar.update(current_p)
 
         try:
-            # 💡 在调用 API 前，将进度条推到中段
+            # API 调用阶段进度
             pbar.update(50) 
             
             res = call_universal_api(
@@ -125,14 +170,12 @@ class UniversalAIRunner:
                 seed=seed
             )
             
-            # 💡 任务结束，进度条拉满
             pbar.update(100)
             
             content = res.get("content", "") if isinstance(res, dict) else str(res)
             return (content, torch.zeros([1, 64, 64, 3]), torch.zeros([1, 64, 64, 3]))
 
         except Exception as e:
-            # 出错重置进度条
             pbar.update(0)
             error_report = f"❌ Error [Source: {source_info}]: {str(e)}"
             print(error_report)
