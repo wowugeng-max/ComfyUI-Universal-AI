@@ -121,59 +121,40 @@ def safe_process_image(img_data):
         return clean_data
     return f"data:image/jpeg;base64,{clean_data}"
 
+# utils.py（修改后的 sync_all_models 函数）
 def sync_all_models(provider, api_key):
-    """刷新模型列表（原函数不变，但内部调用 get_model_tag 已更新）"""
+    """刷新模型列表，使用同步器工厂解耦"""
     if not api_key:
         return
-    collected_models = []
-    session = requests.Session()
-    session.verify = False
+
+    from .syncers.modelSyncerFactory import ModelSyncerFactory
+
+    syncer = ModelSyncerFactory.get_syncer(provider, api_key)
+    if not syncer:
+        print(f"⚠️ [Universal AI] No syncer found for provider: {provider}")
+        return
+
+    collected_models = syncer.sync()
+    if not collected_models:
+        print(f"⚠️ [Universal AI] No models synced for {provider}")
+        return
+
+    # 缓存写入（与原逻辑相同）
     try:
-        # --- 豆包 ---
-        if provider == "Doubao":
-            for reg in ["cn-beijing", "cn-shanghai"]:
-                url = f"https://ark.{reg}.volces.com/api/v3/endpoints"
-                resp = session.get(url, headers={"Authorization": f"Bearer {api_key}"}, timeout=15)
-                if resp.status_code == 200:
-                    for ep in resp.json().get("items", []):
-                        m_name = str(ep.get("model", {}).get("name", "")).lower()
-                        tag = get_model_tag(m_name, provider)   # 使用新函数
-                        collected_models.append(f"{tag} {ep['endpoint_id']}")
-        # --- OpenAI/Grok/Qwen ---
-        elif provider in ["OpenAI", "Grok", "Qwen"]:
-            ep_map = {"OpenAI": "https://api.openai.com/v1/models", "Grok": "https://api.x.ai/v1/models", "Qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1/models"}
-            resp = session.get(ep_map[provider], headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
-            if resp.status_code == 200:
-                for m in resp.json().get("data", []):
-                    collected_models.append(get_model_tag(m['id'], provider))
-
-                    # --- Gemini ---
-        elif provider == "Gemini":
-            url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-            resp = session.get(url, timeout=10)
-            if resp.status_code == 200:
-                for m in resp.json().get("models", []):
-                    name = m["name"].replace("models/", "")
-                    collected_models.append(get_model_tag(m['id'], provider))
+        cache_data = {}
+        if os.path.exists(CACHE_PATH):
+            with open(CACHE_PATH, "r", encoding="utf-8") as f:
+                try:
+                    cache_data = json.load(f)
+                except:
+                    cache_data = {}
+        unique_models = sorted(list(set(collected_models)))
+        cache_data[provider] = unique_models
+        with open(CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(cache_data, f, indent=4, ensure_ascii=False)
+        print(f"💾 [Universal AI] {provider} cache updated with {len(unique_models)} items.")
     except Exception as e:
-        print(f"❌ [Universal AI] {provider} Sync Error: {e}")
-
-    if collected_models:
-        try:
-            cache_data = {}
-            if os.path.exists(CACHE_PATH):
-                with open(CACHE_PATH, "r", encoding="utf-8") as f:
-                    try:
-                        cache_data = json.load(f)
-                    except:
-                        cache_data = {}
-            unique_models = sorted(list(set(collected_models)))
-            cache_data[provider] = unique_models
-            with open(CACHE_PATH, "w", encoding="utf-8") as f:
-                json.dump(cache_data, f, indent=4, ensure_ascii=False)
-            print(f"💾 [Universal AI] {provider} cache updated with {len(unique_models)} items.")
-        except Exception as e:
-            print(f"❌ [Universal AI] Cache Write Error: {e}")
+        print(f"❌ [Universal AI] Cache Write Error: {e}")
 
 def get_combined_models(provider=None):
     """获取合并的模型列表（缓存 + 默认）"""
