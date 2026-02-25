@@ -191,7 +191,7 @@ class UniversalAISetConfig:
         return {
             "required": {
                 "ai_config": ("AI_CONFIG",),
-                "key": ("STRING", {"default": "default"}),
+                "key": ("UNIVERSAL_KEY", {"default": "default"}),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
