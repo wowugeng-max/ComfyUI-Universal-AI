@@ -55,10 +55,15 @@ class UniversalAILoader:
         if refresh_list and active_key:
             print(f"🔍 [DEBUG] load refresh model, key={active_key}")
             sync_all_models(provider, active_key)   # 刷新模型缓存
+
+            # 清洗模型名称（去除UI标签）
+            raw_model_name = kwargs.get("custom_model_name") or model_selection
+            model_name = strip_model_label(raw_model_name)  # 使用 utils 中的函数
+
         return ({
             "provider": provider,
             "api_key": active_key,
-            "model_name": kwargs.get("custom_model_name") or model_selection,
+            "model_name": model_name,
             "api_version": kwargs.get("custom_api_version") or api_version,
             "custom_base_url": kwargs.get("custom_base_url"),
             "extra_params": kwargs.get("extra_params"),

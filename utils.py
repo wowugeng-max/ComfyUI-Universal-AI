@@ -10,7 +10,9 @@ import tempfile
 import numpy as np
 import urllib3
 import copy
+import re
 from PIL import Image
+from enum import Enum
 
 # ====================== 全局配置 ======================
 VERIFY_SSL = False
@@ -23,7 +25,69 @@ api_session.verify = VERIFY_SSL
 CACHE_PATH = os.path.join(os.path.dirname(__file__), "universal_model_cache.json")
 _GLOBAL_AI_CONFIG = {}
 
-# ====================== 工具函数 ======================
+# ====================== 能力枚举 ======================
+class ModelCapability(Enum):
+    CHAT = "chat"
+    VISION = "vision"
+    IMAGE_GEN = "image_gen"
+    VIDEO_GEN = "video_gen"
+    AUDIO_GEN = "audio_gen"
+    UNKNOWN = "unknown"
+
+# ====================== 核心能力判断 ======================
+def get_model_capability(model_name: str, provider: str = "") -> ModelCapability:
+    """
+    根据模型名称和提供商判断模型能力（优先级：视频 > 图像 > 音频 > 视觉 > 对话）
+    """
+    if not isinstance(model_name, str):
+        return ModelCapability.UNKNOWN
+
+    name_lower = model_name.lower()
+
+    # 视频生成
+    if any(kw in name_lower for kw in ["video", "sora", "cogvideo", "veo", "wan2", "t2v"]):
+        return ModelCapability.VIDEO_GEN
+
+    # 音频生成
+    if any(kw in name_lower for kw in ["audio", "speech", "tts", "whisper", "cosyvoice"]):
+        return ModelCapability.AUDIO_GEN
+
+    # 图像生成（排除视觉理解模型）
+    img_kws = ["image", "imagen", "wanx", "dall-e", "flux", "paint", "draw", "art", "gen", "style"]
+    if any(kw in name_lower for kw in img_kws):
+        # 如果同时包含视觉关键词（vl/vision），优先视为视觉理解
+        if not any(vision_kw in name_lower for vision_kw in ["vl", "vision", "visual"]):
+            return ModelCapability.IMAGE_GEN
+
+    # 视觉理解（图文输入）
+    if any(kw in name_lower for kw in ["vision", "vl", "visual"]):
+        return ModelCapability.VISION
+
+    # 默认对话
+    return ModelCapability.CHAT
+
+# ====================== 标签生成 ======================
+def get_model_tag(model_name: str, provider: str = "") -> str:
+    """返回带 UI 标签的模型名称，如 '[CHAT] qwen-max'"""
+    capability = get_model_capability(model_name, provider)
+    tag_map = {
+        ModelCapability.CHAT: "[CHAT]",
+        ModelCapability.VISION: "[VISION]",
+        ModelCapability.IMAGE_GEN: "[IMAGE]",
+        ModelCapability.VIDEO_GEN: "[VIDEO]",
+        ModelCapability.AUDIO_GEN: "[AUDIO]",
+        ModelCapability.UNKNOWN: "[UNKNOWN]",
+    }
+    prefix = tag_map.get(capability, "[UNKNOWN]")
+    return f"{prefix} {model_name}"
+
+def strip_model_label(model_name: str) -> str:
+    """移除模型名称开头的标签前缀，例如 '[CHAT] '"""
+    if not isinstance(model_name, str):
+        return ""
+    return re.sub(r'^\[\w+\]\s*', '', model_name)
+
+# ====================== 原有工具函数保持不变 ======================
 def parse_extra_params(extra_str):
     """解析 extra_params JSON 字符串"""
     try:
@@ -48,37 +112,19 @@ def extract_all_images(parts):
     return [p["data"] for p in parts if p["type"] == "image"]
 
 def safe_process_image(img_data):
-    """
-    安全处理图片数据：
-    - 检查类型，防止非字符串报错
-    - 清理换行符和空格
-    - 补全 Data URI 前缀
-    """
+    """安全处理图片数据，补全 Data URI 前缀"""
     if not isinstance(img_data, str):
-        print(f"⚠️ [Universal AI] Warning: Expected Base64 string, but got {type(img_data)}. Please check node connection.")
+        print(f"⚠️ [Universal AI] Warning: Expected Base64 string, but got {type(img_data)}.")
         return None
     clean_data = img_data.replace("\n", "").replace("\r", "").strip()
     if clean_data.startswith("data:image"):
         return clean_data
     return f"data:image/jpeg;base64,{clean_data}"
 
-def get_model_tag(model_id_lower, provider):
-    """高优先级分类引擎：IMAGE > VIDEO > AUDIO > VISION > CHAT"""
-    if any(kw in model_id_lower for kw in ["video", "sora", "cogvideo", "veo", "wan2", "t2v"]):
-        return "[VIDEO]"
-    if any(kw in model_id_lower for kw in ["audio", "speech", "tts", "whisper", "cosyvoice"]):
-        return "[AUDIO]"
-    img_kws = ["image", "imagen", "wanx", "dall-e", "flux", "paint", "draw", "art", "gen", "style", "cosplay", "background"]
-    if any(kw in model_id_lower for kw in img_kws):
-        if any(kw in model_id_lower for kw in ["-vl", "vision-preview", "chat"]):
-            return "[CHAT]"
-        return "[IMAGE]"
-    if any(kw in model_id_lower for kw in ["vision", "vl", "pro"]):
-        return "[VISION]"
-    return "[CHAT]"
-
 def sync_all_models(provider, api_key):
-    if not api_key: return
+    """刷新模型列表（原函数不变，但内部调用 get_model_tag 已更新）"""
+    if not api_key:
+        return
     collected_models = []
     session = requests.Session()
     session.verify = False
@@ -91,7 +137,7 @@ def sync_all_models(provider, api_key):
                 if resp.status_code == 200:
                     for ep in resp.json().get("items", []):
                         m_name = str(ep.get("model", {}).get("name", "")).lower()
-                        tag = get_model_tag(m_name + ep["endpoint_id"].lower(), provider)
+                        tag = get_model_tag(m_name, provider)   # 使用新函数
                         collected_models.append(f"{tag} {ep['endpoint_id']}")
         # --- OpenAI/Grok/Qwen ---
         elif provider in ["OpenAI", "Grok", "Qwen"]:
@@ -99,35 +145,37 @@ def sync_all_models(provider, api_key):
             resp = session.get(ep_map[provider], headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
             if resp.status_code == 200:
                 for m in resp.json().get("data", []):
-                    collected_models.append(f"{get_model_tag(m['id'].lower(), provider)} {m['id']}")
-        # --- Gemini ---
+                    collected_models.append(get_model_tag(m['id'], provider))
+
+                    # --- Gemini ---
         elif provider == "Gemini":
             url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
             resp = session.get(url, timeout=10)
             if resp.status_code == 200:
                 for m in resp.json().get("models", []):
                     name = m["name"].replace("models/", "")
-                    tag = get_model_tag(name.lower() + m.get("description", "").lower(), provider)
-                    collected_models.append(f"{tag} {name}")
-    except Exception as e: print(f"❌ [Universal AI] {provider} Sync Error: {e}")
+                    collected_models.append(get_model_tag(m['id'], provider))
+    except Exception as e:
+        print(f"❌ [Universal AI] {provider} Sync Error: {e}")
+
     if collected_models:
         try:
             cache_data = {}
             if os.path.exists(CACHE_PATH):
                 with open(CACHE_PATH, "r", encoding="utf-8") as f:
-                    try: cache_data = json.load(f)
-                    except: cache_data = {}
+                    try:
+                        cache_data = json.load(f)
+                    except:
+                        cache_data = {}
             unique_models = sorted(list(set(collected_models)))
             cache_data[provider] = unique_models
             with open(CACHE_PATH, "w", encoding="utf-8") as f:
                 json.dump(cache_data, f, indent=4, ensure_ascii=False)
             print(f"💾 [Universal AI] {provider} cache updated with {len(unique_models)} items.")
-        except Exception as e: print(f"❌ [Universal AI] Cache Write Error: {e}")
+        except Exception as e:
+            print(f"❌ [Universal AI] Cache Write Error: {e}")
 
 def get_combined_models(provider=None):
-    print(f"🔍 [DEBUG] get_combined_models called, provider={provider}")
-    print(f"🔍 [DEBUG] CACHE_PATH = {CACHE_PATH}")
-    print(f"🔍 [DEBUG] File exists? {os.path.exists(CACHE_PATH)}")
     """获取合并的模型列表（缓存 + 默认）"""
     default_map = {
         "Gemini": ["[CHAT] gemini-1.5-flash", "[CHAT] gemini-1.5-pro", "[VISION] gemini-2.0-flash-exp"],
@@ -158,10 +206,8 @@ def get_combined_models(provider=None):
         except Exception:
             pass
 
-    # 缓存不存在或读取失败
     if provider:
         return sorted(default_map.get(provider, fallback_defaults))
-    # 🔧 关键修复：返回所有默认模型的并集，而不是仅 fallback_defaults
     all_defaults = set()
     for models in default_map.values():
         all_defaults.update(models)
@@ -213,7 +259,6 @@ def url_to_video_tensor(url):
     except:
         return None
 
-# ====================== 全局配置存取 ======================
 def set_global_ai_config(key: str, config):
     global _GLOBAL_AI_CONFIG
     if not key:
