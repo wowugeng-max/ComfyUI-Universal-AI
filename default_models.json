@@ -1,0 +1,35 @@
+{
+    "Gemini": [
+        "[CHAT] gemini-1.5-flash",
+        "[CHAT] gemini-1.5-pro",
+        "[VISION] gemini-2.0-flash-exp"
+    ],
+    "OpenAI": [
+        "[CHAT] gpt-4o",
+        "[CHAT] gpt-4o-mini",
+        "[IMAGE] dall-e-3"
+    ],
+    "Grok": [
+        "[CHAT] grok-2-latest",
+        "[CHAT] grok-beta"
+    ],
+    "Qwen": [
+        "[VISION] qwen-vl-max",
+        "[CHAT] qwen-turbo",
+        "[CHAT] qwen-plus"
+    ],
+    "Doubao": [
+        "[CHAT] doubao-pro-32k",
+        "[IMAGE] doubao-t2i-pro"
+    ],
+    "Hailuo": [
+        "[VIDEO] mini-max-v1"
+    ],
+    "Luma": [
+        "[VIDEO] luma-ray-v1"
+    ],
+    "DeepSeek": [
+        "[CHAT] deepseek-chat",
+        "[CHAT] deepseek-coder"
+    ]
+}

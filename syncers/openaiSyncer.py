@@ -2,8 +2,12 @@
 import requests
 from .baseSyncer import BaseModelSyncer
 from ..utils import get_model_tag
+from .modelSyncerFactory import ModelSyncerFactory
 
+@ModelSyncerFactory.register("OpenAI")
 class OpenAISyncer(BaseModelSyncer):
+    provider_name = "OpenAI"
+
     def sync(self) -> list[str]:
         url = "https://api.openai.com/v1/models"
         headers = {"Authorization": f"Bearer {self.api_key}"}

@@ -2,8 +2,12 @@
 import requests
 from .baseSyncer import BaseModelSyncer
 from ..utils import get_model_tag
+from .modelSyncerFactory import ModelSyncerFactory
 
+@ModelSyncerFactory.register("Gemini")
 class GeminiSyncer(BaseModelSyncer):
+    provider_name = "Gemini"
+
     def sync(self) -> list[str]:
         url = f"https://generativelanguage.googleapis.com/v1beta/models?key={self.api_key}"
         try:

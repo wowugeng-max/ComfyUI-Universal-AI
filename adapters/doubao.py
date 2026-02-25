@@ -2,8 +2,12 @@ import time
 import base64
 from .base import BaseAdapter
 from ..utils import api_session, safe_process_image, extract_all_text
+from .factory import AdapterFactory
 
+@AdapterFactory.register("Doubao")
 class DoubaoAdapter(BaseAdapter):
+    provider_name = "Doubao"  # 也可用于自动发现
+
     def call(self, ai_config, system_prompt, parts, temperature, seed):
         api_key = ai_config["api_key"]
         model_name = ai_config["model_name"]

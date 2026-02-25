@@ -1,7 +1,11 @@
 from .base import BaseAdapter
 from ..utils import api_session, extract_all_text, extract_all_images, safe_process_image
+from .factory import AdapterFactory
 
+@AdapterFactory.register("Hailuo")
 class HailuoAdapter(BaseAdapter):
+    provider_name = "Hailuo"  # 也可用于自动发现
+
     def call(self, ai_config, system_prompt, parts, temperature, seed):
         api_key = ai_config["api_key"]
         model_name = ai_config["model_name"]

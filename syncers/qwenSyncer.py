@@ -1,11 +1,13 @@
 import requests
 from .baseSyncer import BaseModelSyncer
 from ..utils import get_model_tag
+from .modelSyncerFactory import ModelSyncerFactory
 
 
+@ModelSyncerFactory.register("Qwen")
 class QwenSyncer(BaseModelSyncer):
     """阿里云通义千问模型同步器"""
-
+    provider_name = "Qwen"
     def sync(self) -> list[str]:
         url = "https://dashscope.aliyuncs.com/compatible-mode/v1/models"
         headers = {"Authorization": f"Bearer {self.api_key}"}

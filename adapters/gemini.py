@@ -3,8 +3,12 @@ from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import base64
 from .base import BaseAdapter
 from ..utils import api_session  # 可选，Gemini SDK 不使用 session
+from .factory import AdapterFactory
 
+@AdapterFactory.register("Gemini")
 class GeminiAdapter(BaseAdapter):
+    provider_name = "Gemini"  # 也可用于自动发现
+
     def call(self, ai_config, system_prompt, parts, temperature, seed):
         api_key = ai_config["api_key"]
         model_name = ai_config["model_name"]

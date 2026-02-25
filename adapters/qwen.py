@@ -3,8 +3,12 @@ import time
 from urllib.parse import urlparse
 from .base import BaseAdapter
 from ..utils import api_session, extract_all_text, safe_process_image, ModelCapability
+from .factory import AdapterFactory
 
+@AdapterFactory.register("Qwen")
 class QwenAdapter(BaseAdapter):
+    provider_name = "Qwen"  # 也可用于自动发现
+
     def call(self, ai_config, system_prompt, parts, temperature, seed):
         api_key = ai_config["api_key"]
         model_name = ai_config["model_name"]

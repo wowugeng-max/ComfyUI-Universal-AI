@@ -30,7 +30,7 @@ class UniversalAILoader:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "provider": (["Gemini", "OpenAI", "Grok", "Qwen", "Doubao", "Hailuo", "Luma"], {"default": "Gemini"}),
+                "provider": (["Gemini", "OpenAI", "Grok", "Qwen", "Doubao", "Hailuo", "Luma","DeepSeek"], {"default": "Gemini"}),
                 "api_key": ("STRING", {"default": "", "multiline": True}),
                 "model_selection": (get_combined_models(), {"default": "gemini-1.5-flash"}),
                 "api_version": (["v1beta", "v1"], {"default": "v1beta"}),

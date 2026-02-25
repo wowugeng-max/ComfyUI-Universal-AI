@@ -1,51 +1,41 @@
 import importlib
-from typing import Type
+import pkgutil
+import inspect
 from .base import BaseAdapter
 
 class AdapterFactory:
-    _provider_to_module = {
-        "Gemini": ".gemini",
-        "OpenAI": ".openai",
-        "Qwen": ".qwen",
-        "Doubao": ".doubao",
-        "Grok": ".grok",
-        "Hailuo": ".hailuo",
-        "Luma": ".luma",
-    }
+    _adapters = {}  # provider -> adapter_class
 
-    _provider_to_classname = {
-        "Gemini": "GeminiAdapter",
-        "OpenAI": "OpenAIAdapter",
-        "Qwen": "QwenAdapter",
-        "Doubao": "DoubaoAdapter",
-        "Grok": "GrokAdapter",
-        "Hailuo": "HailuoAdapter",
-        "Luma": "LumaAdapter",
-    }
+    @classmethod
+    def register(cls, provider):
+        """装饰器：注册适配器类"""
+        def wrapper(adapter_class):
+            if not issubclass(adapter_class, BaseAdapter):
+                raise TypeError(f"{adapter_class} must inherit from BaseAdapter")
+            cls._adapters[provider] = adapter_class
+            return adapter_class
+        return wrapper
 
     @classmethod
     def get_adapter(cls, provider: str) -> BaseAdapter:
-        module_path = cls._provider_to_module.get(provider)
-        class_name = cls._provider_to_classname.get(provider)
-        if not module_path or not class_name:
+        if not cls._adapters:
+            cls._discover_adapters()
+        adapter_class = cls._adapters.get(provider)
+        if not adapter_class:
             raise ValueError(f"Unsupported provider: {provider}")
-
-        try:
-            # 动态导入模块（相对于当前包）
-            module = importlib.import_module(module_path, package=__package__)
-        except ImportError as e:
-            # 根据错误信息提示缺失的依赖
-            missing_pkg = None
-            if "google" in str(e):
-                missing_pkg = "google-generativeai"
-            elif "requests" in str(e):
-                missing_pkg = "requests"
-            else:
-                missing_pkg = "unknown"
-            raise ImportError(
-                f"Failed to import adapter for {provider}. "
-                f"Please install required dependencies: pip install {missing_pkg}"
-            ) from e
-
-        adapter_class = getattr(module, class_name)
         return adapter_class()
+
+    @classmethod
+    def _discover_adapters(cls):
+        """自动扫描 adapters 包下的所有模块，收集被 @register 装饰的类"""
+        package = importlib.import_module("..adapters", __package__)
+        for _, module_name, _ in pkgutil.iter_modules(package.__path__):
+            if module_name.startswith("__"):
+                continue
+            module = importlib.import_module(f"..adapters.{module_name}", __package__)
+            for name, obj in inspect.getmembers(module, inspect.isclass):
+                if issubclass(obj, BaseAdapter) and obj is not BaseAdapter:
+                    # 如果类已经被 @register 装饰，会自动填入 _adapters
+                    # 这里也可以通过约定的属性（如 provider_name）来注册
+                    if hasattr(obj, "provider_name"):
+                        cls._adapters[obj.provider_name] = obj

@@ -1,11 +1,12 @@
 import requests
 from .baseSyncer import BaseModelSyncer
 from ..utils import get_model_tag
+from .modelSyncerFactory import ModelSyncerFactory
 
-
+@ModelSyncerFactory.register("Doubao")
 class DoubaoSyncer(BaseModelSyncer):
     """字节豆包（火山引擎）模型同步器"""
-
+    provider_name = "Doubao"
     def sync(self) -> list[str]:
         regions = ["cn-beijing", "cn-shanghai"]
         models = []
